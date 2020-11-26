@@ -84,6 +84,7 @@
 #include "Components/AudioComponent.h"
 #include "Particles/ParticleSystemComponent.h"
 #include "Sound/SoundBase.h"
+#include "Components/ActorComponent.h"
 
 #define LOCTEXT_NAMESPACE HOUDINI_LOCTEXT_NAMESPACE
 
@@ -470,9 +471,46 @@ FHoudiniEngineBakeUtils::CloneComponentsAndCreateActor(UHoudiniAssetComponent* H
 						}
 						else
 						{
-							// Oh no, the asset is not something we know. We will need to handle each asset type case by case.
-							// for example we could create a bunch of ParticleSystemComponent if given an emitter asset
-							HOUDINI_LOG_ERROR(TEXT("Can not bake instanced actor component for asset type %s"), *ObjectClass->GetName());
+							// Try to interpret the class as an actor component and add it as such to the Actor.
+							TSubclassOf<UActorComponent> ComponentClass;
+							if (ObjectClass->IsChildOf<UActorComponent>())
+							{
+								ComponentClass = ObjectClass;
+							}
+							else if (ObjectClass->IsChildOf<UBlueprint>())
+							{
+								UBlueprint* BlueprintObj = StaticCast<UBlueprint*>(InstancedObject);
+								if (BlueprintObj && !BlueprintObj->IsPendingKill())
+									ComponentClass = *BlueprintObj->GeneratedClass;
+							}
+
+							if (*ComponentClass)
+							{
+								for (AActor* InstancedActor : IAC->GetInstancedActors())
+								{
+									if (InstancedActor && !InstancedActor->IsPendingKill())
+									{
+										UActorComponent* AC = NewObject<UActorComponent>(Actor, *ComponentClass, NAME_None, RF_Public);
+										if (!AC || AC->IsPendingKill())
+											continue;
+
+										Actor->AddInstanceComponent(AC);
+										AC->RegisterComponent();
+										if (USceneComponent* SC = Cast<USceneComponent>(AC))
+										{
+											SC->SetWorldTransform(InstancedActor->GetTransform());
+											if (RootComponent && !RootComponent->IsPendingKill())
+												SC->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepWorldTransform);
+										}
+									}
+								}
+							}
+							else
+							{
+								// Oh no, the asset is not something we know. We will need to handle each asset type case by case.
+								// for example we could create a bunch of ParticleSystemComponent if given an emitter asset
+								HOUDINI_LOG_ERROR(TEXT("Can not bake instanced actor component for asset type %s"), *ObjectClass->GetName());
+							}
 						}
 					}
 				}
